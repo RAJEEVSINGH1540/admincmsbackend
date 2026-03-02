@@ -9,5 +9,4 @@ public class AdminPanelBackendApplication {
 	public static void main(String[] args) {
 		SpringApplication.run(AdminPanelBackendApplication.class, args);
 	}
-
 }
