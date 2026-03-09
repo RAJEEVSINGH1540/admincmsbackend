@@ -63,6 +63,8 @@ public class SecurityConfig {
                         .requestMatchers("/uploads/**").permitAll()
                         .requestMatchers("/api/vision/**").permitAll()
                         .requestMatchers("/api/media-events/**").permitAll()
+                        .requestMatchers("/api/journey/**").permitAll()
+                        .requestMatchers("/api/services/**").permitAll()
 
                         // Protected
                         .requestMatchers("/api/vendor/profile/**").authenticated()
