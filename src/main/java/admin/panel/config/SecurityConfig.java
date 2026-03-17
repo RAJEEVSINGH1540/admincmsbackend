@@ -65,6 +65,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/media-events/**").permitAll()
                         .requestMatchers("/api/journey/**").permitAll()
                         .requestMatchers("/api/services/**").permitAll()
+                        .requestMatchers("/api/aboutus/**").permitAll()
+                        .requestMatchers("/api/media-detail/**").permitAll()
 
                         // Protected
                         .requestMatchers("/api/vendor/profile/**").authenticated()

@@ -1,8 +1,8 @@
 package admin.panel.controller;
 
 import admin.panel.dto.ApiResponse;
-import admin.panel.dto.vendorsuplier.*;
-import admin.panel.entity.vendorsuplier.VendorUser;
+import admin.panel.dto.vendor.*;
+import admin.panel.entity.vendor.VendorUser;
 import admin.panel.service.VendorAuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;

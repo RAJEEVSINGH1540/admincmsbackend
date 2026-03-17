@@ -1,9 +1,12 @@
 package admin.panel.service;
 
-import admin.panel.dto.vendorsuplier.*;
-import admin.panel.entity.vendorsuplier.VendorRole;
-import admin.panel.entity.vendorsuplier.VendorUser;
-import admin.panel.repository.vendorsuplier.VendorUserRepository;
+import admin.panel.dto.vendor.*;
+import admin.panel.entity.vendor.AdminNotification;
+import admin.panel.entity.vendor.VendorRole;
+import admin.panel.entity.vendor.VendorUser;
+import admin.panel.entity.vendor.VendorVerificationStatus;
+import admin.panel.repository.vendor.AdminNotificationRepository;
+import admin.panel.repository.vendor.VendorUserRepository;
 import admin.panel.security.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +26,7 @@ public class VendorAuthService {
 
     private final VendorUserRepository vendorUserRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AdminNotificationRepository notificationRepository;
     private final JwtUtil jwtUtil;
     private final EmailService emailService;
 
@@ -30,22 +34,19 @@ public class VendorAuthService {
     private long verificationTokenExpiration;
 
     // ==================== REGISTER ====================
+
     @Transactional
     public VendorAuthResponse register(VendorRegisterRequest request) {
-        // Validate passwords match
         if (!request.getPassword().equals(request.getConfirmPassword())) {
             throw new RuntimeException("Passwords do not match");
         }
 
-        // Check if email already exists
         if (vendorUserRepository.existsByEmail(request.getEmail().toLowerCase().trim())) {
             throw new RuntimeException("Email already registered. Please login or use a different email.");
         }
 
-        // Generate verification token
         String verificationToken = UUID.randomUUID().toString();
 
-        // Create vendor user with hashed password
         VendorUser user = VendorUser.builder()
                 .name(request.getName().trim())
                 .organisation(request.getOrganisation())
@@ -56,6 +57,7 @@ public class VendorAuthService {
                 .licenseNumber(request.getLicenseNumber())
                 .additionalFields(request.getAdditionalFields() != null ? request.getAdditionalFields() : new HashMap<>())
                 .isEmailVerified(false)
+                .verificationStatus(VendorVerificationStatus.PENDING)
                 .emailVerificationToken(verificationToken)
                 .emailVerificationTokenExpiry(LocalDateTime.now().plusHours(24))
                 .role(VendorRole.VENDOR)
@@ -64,8 +66,29 @@ public class VendorAuthService {
 
         VendorUser saved = vendorUserRepository.save(user);
 
-        // Send verification email
+        // 1. Send email verification link to vendor
         emailService.sendVerificationEmail(saved.getEmail(), saved.getName(), verificationToken);
+
+        // 2. Send registration confirmation email to vendor (stay updated)
+        emailService.sendVendorRegistrationConfirmation(saved.getEmail(), saved.getName());
+
+        // 3. Send notification email to admin
+        emailService.sendAdminNewVendorNotification(
+                saved.getName(),
+                saved.getEmail(),
+                saved.getPhoneNumber(),
+                saved.getOrganisation()
+        );
+
+        // 4. Create admin notification in DB
+        AdminNotification notification = AdminNotification.builder()
+                .type("VENDOR_REGISTRATION")
+                .title("New Vendor Registration")
+                .message("New vendor " + saved.getName() + " (" + saved.getEmail() + ") has registered and is awaiting verification.")
+                .referenceId(saved.getId())
+                .isRead(false)
+                .build();
+        notificationRepository.save(notification);
 
         log.info("Vendor registered: {} ({})", saved.getName(), saved.getEmail());
 
@@ -79,7 +102,7 @@ public class VendorAuthService {
                 .orElseThrow(() -> new RuntimeException("Invalid verification token"));
 
         if (user.getIsEmailVerified()) {
-            return "Email already verified. You can login now.";
+            return "Email already verified.";
         }
 
         if (user.getEmailVerificationTokenExpiry().isBefore(LocalDateTime.now())) {
@@ -91,11 +114,8 @@ public class VendorAuthService {
         user.setEmailVerificationTokenExpiry(null);
         vendorUserRepository.save(user);
 
-        // Send welcome email
-        emailService.sendWelcomeEmail(user.getEmail(), user.getName());
-
         log.info("Email verified for: {}", user.getEmail());
-        return "Email verified successfully! You can now login.";
+        return "Email verified successfully! Your account is pending admin approval. You will receive an email once verified.";
     }
 
     // ==================== RESEND VERIFICATION ====================
@@ -123,28 +143,33 @@ public class VendorAuthService {
         VendorUser user = vendorUserRepository.findByEmail(request.getEmail().toLowerCase().trim())
                 .orElseThrow(() -> new RuntimeException("Invalid email or password"));
 
-        // Check password
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new RuntimeException("Invalid email or password");
         }
 
-        // Check if active
         if (!user.getIsActive()) {
             throw new RuntimeException("Your account has been deactivated. Please contact support.");
         }
 
-        // Check email verification
         if (!user.getIsEmailVerified()) {
             throw new RuntimeException("Please verify your email before logging in. Check your inbox.");
         }
 
-        // Generate tokens
+        // CHECK ADMIN VERIFICATION
+        if (user.getVerificationStatus() == VendorVerificationStatus.PENDING) {
+            throw new RuntimeException("Your account is pending admin approval. You will receive an email once verified.");
+        }
+
+        if (user.getVerificationStatus() == VendorVerificationStatus.REJECTED) {
+            String reason = user.getRejectionReason() != null ? " Reason: " + user.getRejectionReason() : "";
+            throw new RuntimeException("Your account has been rejected by admin." + reason + " Please contact support.");
+        }
+
         String accessToken = jwtUtil.generateAccessToken(
                 user.getEmail(), user.getId(), user.getRole().name()
         );
         String refreshToken = jwtUtil.generateRefreshToken(user.getEmail(), user.getId());
 
-        // Save refresh token
         user.setRefreshToken(refreshToken);
         user.setLastLoginAt(LocalDateTime.now());
         vendorUserRepository.save(user);
@@ -172,7 +197,6 @@ public class VendorAuthService {
         VendorUser user = vendorUserRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // Verify stored refresh token matches
         if (!refreshToken.equals(user.getRefreshToken())) {
             throw new RuntimeException("Refresh token mismatch. Please login again.");
         }
@@ -181,7 +205,6 @@ public class VendorAuthService {
             throw new RuntimeException("Account deactivated");
         }
 
-        // Generate new tokens
         String newAccessToken = jwtUtil.generateAccessToken(
                 user.getEmail(), user.getId(), user.getRole().name()
         );
@@ -219,13 +242,13 @@ public class VendorAuthService {
                 .orElseThrow(() -> new RuntimeException("Invalid reset token"));
 
         if (user.getPasswordResetTokenExpiry().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Reset token has expired. Please request a new one.");
+            throw new RuntimeException("Reset token has expired.");
         }
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         user.setPasswordResetToken(null);
         user.setPasswordResetTokenExpiry(null);
-        user.setRefreshToken(null); // Invalidate all sessions
+        user.setRefreshToken(null);
         vendorUserRepository.save(user);
 
         log.info("Password reset for: {}", user.getEmail());
@@ -246,7 +269,7 @@ public class VendorAuthService {
         }
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
-        user.setRefreshToken(null); // Invalidate sessions
+        user.setRefreshToken(null);
         vendorUserRepository.save(user);
 
         log.info("Password changed for: {}", user.getEmail());

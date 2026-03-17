@@ -1,7 +1,7 @@
 package admin.panel.security;
 
-import admin.panel.entity.vendorsuplier.VendorUser;
-import admin.panel.repository.vendorsuplier.VendorUserRepository;
+import admin.panel.entity.vendor.VendorUser;
+import admin.panel.repository.vendor.VendorUserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
